@@ -3,12 +3,12 @@ import cors from "cors";
 import mongoose from "mongoose";
 import connectDB from "./db/index.js";
 
-import authRoutes from "./routes/auth.routes.js"
-import questionRoutes from "./routes/question.routes.js"
+import authRoutes from "./routes/auth.routes.js";
+import questionRoutes from "./routes/question.routes.js";
 
 const app = express();
+const allowedOrigins = [process.env.FRONTEND_URL, process.env.CORS_ORIGIN].filter(Boolean);
 
-// Database connection middleware for serverless
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -26,7 +26,13 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("CORS origin not allowed"));
+    },
     credentials: true
   })
 );
@@ -34,7 +40,7 @@ app.use(
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    message: "API is working 🚀",
+    message: "API is working",
     dbStatus: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
   });
 });

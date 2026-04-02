@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon -r dotenv/config src/index.js"
+    "dev": "nodemon -r dotenv/config src/index.js",
+    "seed:questions": "node -r dotenv/config src/scripts/seedQuestions.js",
+    "seed:admin": "node -r dotenv/config src/scripts/seedAdmin.js",
+    "seed": "npm run seed:questions && npm run seed:admin"
   },
   "repository": {
     "type": "git",

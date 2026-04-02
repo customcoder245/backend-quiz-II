@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import Question from "../models/question.model.js";
 import UserResponse from "../models/userResponse.model.js";
@@ -7,20 +8,27 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// ─── QUESTION CRUD ───────────────────────────────────────────
+const isValidResponsesPayload = (responses) =>
+    Array.isArray(responses) &&
+    responses.every(
+        (item) =>
+            item &&
+            typeof item === "object" &&
+            item.questionId &&
+            item.answer !== undefined
+    );
 
-// GET all questions (optionally filter by gender)
 export const getAllQuestions = async (req, res) => {
     try {
         const { gender, includeInactive, isPopup } = req.query;
-        const filter = includeInactive === 'true' ? {} : { isActive: true };
+        const filter = includeInactive === "true" ? {} : { isActive: true };
 
-        if (gender && gender !== 'all' && gender !== 'both') {
+        if (gender && gender !== "all" && gender !== "both") {
             filter.$or = [{ gender: "both" }, { gender }];
         }
 
         if (isPopup !== undefined) {
-            filter.isPopup = isPopup === 'true';
+            filter.isPopup = isPopup === "true";
         }
 
         const questions = await Question.find(filter).sort({ order: 1 });
@@ -31,11 +39,13 @@ export const getAllQuestions = async (req, res) => {
     }
 };
 
-// GET single question by ID
 export const getQuestionById = async (req, res) => {
     try {
         const question = await Question.findById(req.params.id);
-        if (!question) return res.status(404).json({ message: "Question not found" });
+        if (!question) {
+            return res.status(404).json({ message: "Question not found" });
+        }
+
         return res.status(200).json({ question });
     } catch (error) {
         console.error("Error in getQuestionById:", error);
@@ -43,10 +53,16 @@ export const getQuestionById = async (req, res) => {
     }
 };
 
-// POST create new question
 export const createQuestion = async (req, res) => {
     try {
-        const question = await Question.create(req.body);
+        const payload = { ...req.body };
+
+        if (payload.order == null) {
+            const lastQuestion = await Question.findOne().sort({ order: -1 }).select("order");
+            payload.order = (lastQuestion?.order || 0) + 1;
+        }
+
+        const question = await Question.create(payload);
         return res.status(201).json({ message: "Question created", question });
     } catch (error) {
         console.error("Error in createQuestion:", error);
@@ -54,11 +70,12 @@ export const createQuestion = async (req, res) => {
     }
 };
 
-// PUT update question by ID
 export const updateQuestion = async (req, res) => {
     try {
         const question = await Question.findById(req.params.id);
-        if (!question) return res.status(404).json({ message: "Question not found" });
+        if (!question) {
+            return res.status(404).json({ message: "Question not found" });
+        }
 
         question.set(req.body);
         await question.save();
@@ -70,11 +87,13 @@ export const updateQuestion = async (req, res) => {
     }
 };
 
-// DELETE question by ID
 export const deleteQuestion = async (req, res) => {
     try {
         const question = await Question.findByIdAndDelete(req.params.id);
-        if (!question) return res.status(404).json({ message: "Question not found" });
+        if (!question) {
+            return res.status(404).json({ message: "Question not found" });
+        }
+
         return res.status(200).json({ message: "Question deleted" });
     } catch (error) {
         console.error("Error in deleteQuestion:", error);
@@ -82,13 +101,16 @@ export const deleteQuestion = async (req, res) => {
     }
 };
 
-// ─── USER RESPONSE ───────────────────────────────────────────
-
-// POST save or update user's quiz responses
 export const saveUserResponses = async (req, res) => {
     try {
         const userId = req.user.userId;
         const { responses, completed, gender } = req.body;
+
+        if (!isValidResponsesPayload(responses)) {
+            return res.status(400).json({
+                message: "responses must be an array of { questionId, answer } objects"
+            });
+        }
 
         const user = await User.findById(userId);
         if (!user) {
@@ -108,7 +130,7 @@ export const saveUserResponses = async (req, res) => {
 
         let userResponse = await UserResponse.findOne({ userId });
         if (!userResponse) {
-            userResponse = new UserResponse({ userId });
+            userResponse = new UserResponse({ userId, responses: [] });
         }
 
         userResponse.responses = responses;
@@ -122,18 +144,24 @@ export const saveUserResponses = async (req, res) => {
     }
 };
 
-// POST append single response dynamically
 export const appendUserResponse = async (req, res) => {
     try {
         const userId = req.user.userId;
         const { questionId, answer } = req.body;
 
-        const userResponse = await UserResponse.findOne({ userId });
-        if (!userResponse) {
-            return res.status(404).json({ message: "No responses found for this user" });
+        if (!questionId || answer === undefined) {
+            return res.status(400).json({ message: "questionId and answer are required" });
         }
 
-        const existingIndex = userResponse.responses.findIndex(r => r.questionId.toString() === questionId);
+        let userResponse = await UserResponse.findOne({ userId });
+        if (!userResponse) {
+            userResponse = new UserResponse({ userId, responses: [] });
+        }
+
+        const existingIndex = userResponse.responses.findIndex(
+            (response) => response.questionId.toString() === questionId
+        );
+
         if (existingIndex >= 0) {
             userResponse.responses[existingIndex].answer = answer;
         } else {
@@ -148,15 +176,15 @@ export const appendUserResponse = async (req, res) => {
     }
 };
 
-// GET logged-in user's responses
 export const getUserResponses = async (req, res) => {
     try {
         const userId = req.user.userId;
-        const userResponse = await UserResponse.findOne({ userId }).populate(
-            "responses.questionId"
-        );
-        if (!userResponse)
+        const userResponse = await UserResponse.findOne({ userId }).populate("responses.questionId");
+
+        if (!userResponse) {
             return res.status(404).json({ message: "No responses found for this user" });
+        }
+
         return res.status(200).json({ userResponse });
     } catch (error) {
         console.error("Error in getUserResponses:", error);
@@ -164,7 +192,6 @@ export const getUserResponses = async (req, res) => {
     }
 };
 
-// POST public submission of assessment
 export const submitAssessment = async (req, res) => {
     try {
         const { email, firstName, responses, gender } = req.body;
@@ -173,35 +200,48 @@ export const submitAssessment = async (req, res) => {
             return res.status(400).json({ message: "Email is required" });
         }
 
+        if (!isValidResponsesPayload(responses)) {
+            return res.status(400).json({
+                message: "responses must be an array of { questionId, answer } objects"
+            });
+        }
+
         let user = await User.findOne({ email });
 
         if (!user) {
+            const generatedPassword = Math.random().toString(36).slice(-8) + "A1!";
+            const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
             user = await User.create({
                 email,
                 firstName: firstName || "Guest",
-                gender: gender || "both",
-                password: Math.random().toString(36).slice(-8) + "!",
+                gender: gender || "other",
+                password: hashedPassword,
                 role: "user"
             });
         } else {
-            // Update existing user's info
-            if (firstName) user.firstName = firstName;
-            if (gender) user.gender = gender;
+            if (firstName) {
+                user.firstName = firstName;
+            }
+
+            if (gender) {
+                user.gender = gender;
+            }
+
             await user.save();
         }
 
         let userResponse = await UserResponse.findOne({ userId: user._id });
         if (!userResponse) {
-            userResponse = new UserResponse({ userId: user._id });
+            userResponse = new UserResponse({ userId: user._id, responses: [] });
         }
 
         userResponse.responses = responses;
         userResponse.completedAt = new Date();
         await userResponse.save();
 
-        // Generate a JWT token so the user can access their results
         const token = jwt.sign(
-            { userId: user._id, email: user.email },
+            { userId: user._id, email: user.email, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );
@@ -213,7 +253,7 @@ export const submitAssessment = async (req, res) => {
                 email: user.email,
                 firstName: user.firstName,
                 gender: user.gender,
-                role: user.role,
+                role: user.role
             },
             userResponse
         });
@@ -223,7 +263,6 @@ export const submitAssessment = async (req, res) => {
     }
 };
 
-// GET all assessment submissions (Admin only)
 export const getAllSubmissions = async (req, res) => {
     try {
         const submissions = await UserResponse.find()
@@ -231,62 +270,56 @@ export const getAllSubmissions = async (req, res) => {
             .populate("responses.questionId", "questionText")
             .sort({ createdAt: -1 });
 
-        console.log(`Found ${submissions.length} raw submissions in DB`);
-        if (submissions.length > 0) {
-            console.log("First submission example:", JSON.stringify(submissions[0], null, 2));
-        }
+        const formattedSubmissions = submissions.map((submission) => {
+            const validResponses = (submission.responses || []).filter(
+                (response) => response && typeof response === "object"
+            );
+            const responseCount = validResponses.length;
 
-        const formattedSubmissions = submissions.map((sub, index) => {
-            try {
-                if (!sub) return null;
-                const responses = sub.responses || [];
-                const validResponses = responses.filter(r => r && typeof r === 'object');
-                const responseCount = validResponses.length;
+            const firstThreeQuestions = validResponses
+                .slice(0, 3)
+                .map((response) => response.questionId?.questionText || "Deleted Question")
+                .join(", ");
 
-                const firstThreeQuestions = validResponses
-                    .slice(0, 3)
-                    .map(r => r.questionId?.questionText || "Deleted Question")
-                    .join(", ");
-
-                const summary = responseCount > 3
+            const summary =
+                responseCount > 3
                     ? `${firstThreeQuestions}... (+${responseCount - 3} more)`
                     : firstThreeQuestions || "No questions answered";
 
-                return {
-                    id: sub._id,
-                    name: sub.userId?.firstName || "Guest",
-                    email: sub.userId?.email || "N/A",
-                    gender: sub.userId?.gender || "N/A",
-                    date: sub.completedAt ? new Date(sub.completedAt).toLocaleDateString() : "In Progress",
-                    questions: summary,
-                    responseCount,
-                    selectedOptions: validResponses
+            return {
+                id: submission._id,
+                name: submission.userId?.firstName || "Guest",
+                email: submission.userId?.email || "N/A",
+                gender: submission.userId?.gender || "N/A",
+                date: submission.completedAt
+                    ? new Date(submission.completedAt).toLocaleDateString()
+                    : "In Progress",
+                questions: summary,
+                responseCount,
+                selectedOptions:
+                    validResponses
                         .slice(0, 3)
-                        .map(r => {
-                            if (!r || r.answer == null) return "";
-                            return Array.isArray(r.answer) ? r.answer.join(", ") : String(r.answer);
+                        .map((response) => {
+                            if (response.answer == null) {
+                                return "";
+                            }
+
+                            return Array.isArray(response.answer)
+                                ? response.answer.join(", ")
+                                : String(response.answer);
                         })
                         .join(" | ") + (responseCount > 3 ? "..." : ""),
-                    fullResponses: validResponses.map(r => ({
-                        question: r.questionId?.questionText || "Deleted Question",
-                        answer: r.answer != null ? (Array.isArray(r.answer) ? r.answer.join(", ") : String(r.answer)) : ""
-                    }))
-                };
-            } catch (err) {
-                console.error(`Error formatting submission at index ${index}:`, err);
-                return {
-                    id: sub?._id || "error",
-                    name: "Error Loading",
-                    email: "N/A",
-                    gender: "N/A",
-                    date: "N/A",
-                    questions: "Data formatting error",
-                    responseCount: 0,
-                    selectedOptions: "N/A",
-                    fullResponses: []
-                };
-            }
-        }).filter(Boolean);
+                fullResponses: validResponses.map((response) => ({
+                    question: response.questionId?.questionText || "Deleted Question",
+                    answer:
+                        response.answer != null
+                            ? Array.isArray(response.answer)
+                                ? response.answer.join(", ")
+                                : String(response.answer)
+                            : ""
+                }))
+            };
+        });
 
         return res.status(200).json({
             submissions: formattedSubmissions,
@@ -301,40 +334,39 @@ export const getAllSubmissions = async (req, res) => {
     }
 };
 
-// GET dashboard statistics (Admin only)
 export const getDashboardStats = async (req, res) => {
     try {
         const totalSubmissions = await UserResponse.countDocuments();
-        const completedSubmissions = await UserResponse.countDocuments({ completedAt: { $ne: null } });
-        const totalUsers = await User.countDocuments({ role: 'user' });
+        const completedSubmissions = await UserResponse.countDocuments({
+            completedAt: { $ne: null }
+        });
+        const totalUsers = await User.countDocuments({ role: "user" });
 
-        // Calculate completion rate
-        const completionRate = totalSubmissions > 0
-            ? ((completedSubmissions / totalSubmissions) * 100).toFixed(1)
-            : 0;
+        const completionRate =
+            totalSubmissions > 0
+                ? ((completedSubmissions / totalSubmissions) * 100).toFixed(1)
+                : 0;
 
-        // Recently completed (last 7 days)
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
         const recentSubmissionsCount = await UserResponse.countDocuments({
             createdAt: { $gte: sevenDaysAgo }
         });
 
-        // Gender distribution
-        const femaleCount = await User.countDocuments({ role: 'user', gender: 'female' });
-        const maleCount = await User.countDocuments({ role: 'user', gender: 'male' });
-        const otherCount = await User.countDocuments({ role: 'user', gender: 'other' });
+        const femaleCount = await User.countDocuments({ role: "user", gender: "female" });
+        const maleCount = await User.countDocuments({ role: "user", gender: "male" });
+        const otherCount = await User.countDocuments({ role: "user", gender: "other" });
 
         const totalWithGender = femaleCount + maleCount + otherCount;
         const genderStats = {
             female: totalWithGender > 0 ? Math.round((femaleCount / totalWithGender) * 100) : 0,
             male: totalWithGender > 0 ? Math.round((maleCount / totalWithGender) * 100) : 0,
-            other: totalWithGender > 0 ? Math.round((otherCount / totalWithGender) * 100) : 0,
+            other: totalWithGender > 0 ? Math.round((otherCount / totalWithGender) * 100) : 0
         };
 
-        // Last 7 days trend for the bar chart
         const last7Days = [];
-        for (let i = 6; i >= 0; i--) {
+        for (let i = 6; i >= 0; i -= 1) {
             const date = new Date();
             date.setDate(date.getDate() - i);
             date.setHours(0, 0, 0, 0);
@@ -350,7 +382,7 @@ export const getDashboardStats = async (req, res) => {
             });
 
             last7Days.push({
-                day: date.toLocaleDateString('en-US', { weekday: 'short' }),
+                day: date.toLocaleDateString("en-US", { weekday: "short" }),
                 count
             });
         }
@@ -372,7 +404,6 @@ export const getDashboardStats = async (req, res) => {
     }
 };
 
-// DELETE user's responses (reset quiz)
 export const deleteUserResponses = async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -384,7 +415,6 @@ export const deleteUserResponses = async (req, res) => {
     }
 };
 
-// POST reorder questions — two-phase bulkWrite to avoid duplicate-key conflicts (Admin only)
 export const reorderQuestions = async (req, res) => {
     try {
         const { orderedIds } = req.body;
@@ -392,29 +422,25 @@ export const reorderQuestions = async (req, res) => {
             return res.status(400).json({ message: "orderedIds array is required" });
         }
 
-        // Filter out any invalid IDs upfront
-        const validIds = orderedIds.filter(id => mongoose.Types.ObjectId.isValid(id));
+        const validIds = orderedIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
         if (validIds.length === 0) {
             return res.status(400).json({ message: "No valid IDs provided" });
         }
 
-        // ── Phase 1: Set orders to large temp values to avoid unique-key conflicts ──
-        // (e.g. if a unique index on 'order' exists, swapping 1→2 and 2→1 would collide)
-        const OFFSET = 1_000_000;
+        const offset = 1000000;
         const tempOps = validIds.map((id, index) => ({
             updateOne: {
                 filter: { _id: new mongoose.Types.ObjectId(id) },
-                update: { $set: { order: index + 1 + OFFSET } },
-            },
+                update: { $set: { order: index + 1 + offset } }
+            }
         }));
         await Question.bulkWrite(tempOps, { ordered: false });
 
-        // ── Phase 2: Set the real final order values ──
         const finalOps = validIds.map((id, index) => ({
             updateOne: {
                 filter: { _id: new mongoose.Types.ObjectId(id) },
-                update: { $set: { order: index + 1 } },
-            },
+                update: { $set: { order: index + 1 } }
+            }
         }));
         await Question.bulkWrite(finalOps, { ordered: false });
 

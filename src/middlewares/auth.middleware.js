@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
+import User from "../models/user.model.js";
 
-export const protect = (req, res, next) => {
+export const protect = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -11,9 +12,30 @@ export const protect = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded; // { userId, email }
+
+        const user = await User.findById(decoded.userId).select("-password");
+        if (!user) {
+            return res.status(401).json({ message: "User not found." });
+        }
+
+        req.user = {
+            userId: user._id.toString(),
+            email: user.email,
+            role: user.role,
+            firstName: user.firstName,
+            gender: user.gender,
+        };
+
         next();
     } catch (error) {
         return res.status(401).json({ message: "Invalid or expired token." });
     }
+};
+
+export const adminOnly = (req, res, next) => {
+    if (!req.user || req.user.role !== "admin") {
+        return res.status(403).json({ message: "Admin access required." });
+    }
+
+    next();
 };
