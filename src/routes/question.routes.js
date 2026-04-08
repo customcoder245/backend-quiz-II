@@ -4,20 +4,23 @@ import {
     getQuestionById,
     createQuestion,
     completeAssessment,
+    saveLeadUser,
     updateQuestion,
     deleteQuestion,
     saveUserResponses,
     submitAssessment,
     reorderQuestions,
 } from "../controllers/question.controller.js";
-import { adminOnly, protect } from "../middlewares/auth.middleware.js";
+import { adminOnly, optionalProtect, protect } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
 // ─── USER RESPONSES (protected/public) ─────────────────────────
-router.post("/submit", protect, submitAssessment);             // POST /api/v1/questions/submit (User)
-router.post("/responses/save", protect, saveUserResponses);    // POST /api/v1/questions/responses/save
-router.post("/responses/complete", protect, completeAssessment); // POST /api/v1/questions/responses/complete
+router.post("/submit", optionalProtect, submitAssessment);             // POST /api/v1/questions/submit (User)
+router.post("/responses/save", optionalProtect, saveUserResponses);    // POST /api/v1/questions/responses/save
+router.post("/responses/store", optionalProtect, saveUserResponses);   // POST /api/v1/questions/responses/store
+router.post("/responses/user-details", optionalProtect, saveLeadUser); // POST /api/v1/questions/responses/user-details
+router.post("/responses/complete", optionalProtect, completeAssessment); // POST /api/v1/questions/responses/complete
 
 // ─── QUESTION REORDER ─────────────────────────────────────────
 router.post("/reorder", protect, adminOnly, reorderQuestions);            // POST /api/v1/questions/reorder (Admin)

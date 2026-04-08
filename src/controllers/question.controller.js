@@ -14,6 +14,30 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const exportsDirectory = path.join(__dirname, "..", "exports");
 const ASSESSMENT_COMPLETE_SCREEN = 24;
+const QUESTION_SNAPSHOT_FIELDS = [
+    "_id",
+    "order",
+    "screenKey",
+    "storageKey",
+    "questionText",
+    "description",
+    "type",
+    "answerFormat",
+    "gender",
+    "options",
+    "inputConfig",
+    "attributeIds",
+    "classIds",
+    "nextScreenKey",
+    "isPopup",
+    "stakeholder",
+    "domain",
+    "subdomain",
+    "customHtml",
+    "customCss",
+    "customJs",
+    "isActive"
+].join(" ");
 
 const slugify = (value) =>
     String(value || "")
@@ -135,14 +159,66 @@ const getAnswerValue = (response) => {
     return undefined;
 };
 
+const isPlainObject = (value) =>
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value);
+
+const isLikelyResponseEntry = (value) => {
+    if (value === undefined || value === null) {
+        return false;
+    }
+
+    if (Array.isArray(value)) {
+        return true;
+    }
+
+    if (!isPlainObject(value)) {
+        return true;
+    }
+
+    return getAnswerValue(value) !== undefined || Boolean(getQuestionReference(value));
+};
+
+const isLikelyResponseMap = (value) =>
+    isPlainObject(value) &&
+    Object.keys(value).length > 0 &&
+    Object.values(value).every(isLikelyResponseEntry);
+
+const getResponsePayloadCandidate = (body = {}) => {
+    const candidates = [
+        body.responses,
+        body.answers,
+        body.userResponses,
+        body.selectedAnswers,
+        body.assessmentResponses,
+        body.assessmentData,
+        body.assessment,
+        body.questions,
+        body.assessmentData?.responses,
+        body.assessmentData?.answers,
+        body.assessment?.responses,
+        body.assessment?.answers,
+        body.userResponse?.responses,
+        body.userResponse?.answers,
+        body.userResponse?.userResponses,
+        body.data?.responses,
+        body.data?.answers,
+        body.data?.userResponses,
+        body.payload?.responses,
+        body.payload?.answers,
+        body.payload?.userResponses,
+        body.payload?.data?.responses,
+        body.payload?.data?.answers
+    ].filter((candidate) => candidate !== undefined && candidate !== null);
+
+    return candidates.find(
+        (candidate) => Array.isArray(candidate) || isLikelyResponseMap(candidate)
+    );
+};
+
 const getResponsesFromRequest = (body = {}) => {
-    const payload =
-        body.responses ||
-        body.answers ||
-        body.userResponses ||
-        body.selectedAnswers ||
-        body.assessmentResponses ||
-        body.data;
+    const payload = getResponsePayloadCandidate(body);
 
     if (Array.isArray(payload)) {
         return payload.map((item, index) => {
@@ -177,6 +253,190 @@ const getResponsesFromRequest = (body = {}) => {
     return [];
 };
 
+const getFirstNonEmptyValue = (...values) => {
+    for (const value of values) {
+        if (typeof value === "string" && value.trim()) {
+            return value.trim();
+        }
+
+        if (value !== undefined && value !== null && typeof value !== "string") {
+            return value;
+        }
+    }
+
+    return undefined;
+};
+
+const getUserProfilePayloadFromBody = (body = {}) => {
+    const sources = [
+        body,
+        body.user,
+        body.userDetails,
+        body.userData,
+        body.profile,
+        body.lead,
+        body.leadUser,
+        body.candidate,
+        body.candidateDetails,
+        body.contact,
+        body.contactInfo,
+        body.personalInfo,
+        body.meta,
+        body.data,
+        body.payload
+    ].filter(isPlainObject);
+
+    const profilePayload = {
+        name: getFirstNonEmptyValue(...sources.map((source) => source.name)),
+        fullName: getFirstNonEmptyValue(...sources.map((source) => source.fullName)),
+        firstName: getFirstNonEmptyValue(...sources.map((source) => source.firstName)),
+        middleInitial: getFirstNonEmptyValue(...sources.map((source) => source.middleInitial)),
+        lastName: getFirstNonEmptyValue(...sources.map((source) => source.lastName)),
+        gender: getFirstNonEmptyValue(...sources.map((source) => source.gender)),
+        email: getFirstNonEmptyValue(...sources.map((source) => source.email))
+    };
+
+    if (!profilePayload.fullName && profilePayload.name) {
+        profilePayload.fullName = profilePayload.name;
+    }
+
+    if (!profilePayload.name && profilePayload.fullName) {
+        profilePayload.name = profilePayload.fullName;
+    }
+
+    return profilePayload;
+};
+
+const sanitizePayloadForStorage = (value) => {
+    if (Array.isArray(value)) {
+        return value.map((item) => sanitizePayloadForStorage(item));
+    }
+
+    if (!isPlainObject(value)) {
+        return value;
+    }
+
+    return Object.entries(value).reduce((sanitizedValue, [key, nestedValue]) => {
+        const normalizedKey = String(key || "").toLowerCase();
+
+        if (
+            [
+                "password",
+                "token",
+                "accesstoken",
+                "refreshtoken",
+                "idtoken",
+                "admintoken"
+            ].includes(normalizedKey)
+        ) {
+            return sanitizedValue;
+        }
+
+        sanitizedValue[key] = sanitizePayloadForStorage(nestedValue);
+        return sanitizedValue;
+    }, {});
+};
+
+const getSubmissionIdFromBody = (body = {}) =>
+    getFirstNonEmptyValue(
+        body.submissionId,
+        body.assessmentId,
+        body.id,
+        body.payload?.submissionId,
+        body.payload?.assessmentId,
+        body.payload?.id,
+        body.data?.submissionId,
+        body.data?.assessmentId,
+        body.data?.id,
+        body.userResponse?.submissionId,
+        body.meta?.submissionId
+    ) || "";
+
+const getAssessmentInfoFromBody = (body = {}) => {
+    const sanitizedBody = sanitizePayloadForStorage(body);
+    const {
+        responses,
+        answers,
+        userResponses,
+        selectedAnswers,
+        assessmentResponses,
+        questions,
+        ...assessmentInfo
+    } = sanitizedBody || {};
+
+    return {
+        ...assessmentInfo,
+        responseCount: getResponsesFromRequest(body).length,
+        submittedAt: assessmentInfo.submittedAt || assessmentInfo.createdAt || new Date().toISOString()
+    };
+};
+
+const toPlainQuestionSnapshot = (question) => {
+    if (!question) {
+        return null;
+    }
+
+    const plainQuestion =
+        typeof question.toObject === "function"
+            ? question.toObject({ depopulate: true })
+            : { ...question };
+
+    return {
+        id: plainQuestion._id || plainQuestion.id || null,
+        order: plainQuestion.order ?? null,
+        screenKey: plainQuestion.screenKey || "",
+        storageKey: plainQuestion.storageKey || "",
+        questionText: plainQuestion.questionText || "",
+        description: plainQuestion.description || "",
+        type: plainQuestion.type || "",
+        answerFormat: plainQuestion.answerFormat || "",
+        gender: plainQuestion.gender || "",
+        options: Array.isArray(plainQuestion.options) ? plainQuestion.options : [],
+        inputConfig: plainQuestion.inputConfig || null,
+        attributeIds: Array.isArray(plainQuestion.attributeIds) ? plainQuestion.attributeIds : [],
+        classIds: Array.isArray(plainQuestion.classIds) ? plainQuestion.classIds : [],
+        nextScreenKey: plainQuestion.nextScreenKey || "",
+        isPopup: Boolean(plainQuestion.isPopup),
+        stakeholder: plainQuestion.stakeholder || "",
+        domain: plainQuestion.domain || "",
+        subdomain: plainQuestion.subdomain || "",
+        customHtml: plainQuestion.customHtml || "",
+        customCss: plainQuestion.customCss || "",
+        customJs: plainQuestion.customJs || "",
+        isActive: plainQuestion.isActive ?? true
+    };
+};
+
+const buildFallbackQuestionSnapshot = (response = {}, questionReference = "") => ({
+    id:
+        mongoose.Types.ObjectId.isValid(response.questionId) ||
+        mongoose.Types.ObjectId.isValid(response._id) ||
+        mongoose.Types.ObjectId.isValid(response.id)
+            ? String(response.questionId || response._id || response.id)
+            : null,
+    order: response.order ?? null,
+    screenKey: response.screenKey || "",
+    storageKey: response.storageKey || response.questionKey || response.key || "",
+    questionText: response.questionText || response.question || response.label || response.title || questionReference,
+    description: response.description || "",
+    type: response.type || "",
+    answerFormat: response.answerFormat || "",
+    gender: response.gender || "",
+    options: Array.isArray(response.options) ? response.options : [],
+    inputConfig: response.inputConfig || null,
+    attributeIds: Array.isArray(response.attributeIds) ? response.attributeIds : [],
+    classIds: Array.isArray(response.classIds) ? response.classIds : [],
+    nextScreenKey: response.nextScreenKey || "",
+    isPopup: Boolean(response.isPopup),
+    stakeholder: response.stakeholder || "",
+    domain: response.domain || "",
+    subdomain: response.subdomain || "",
+    customHtml: response.customHtml || "",
+    customCss: response.customCss || "",
+    customJs: response.customJs || "",
+    isActive: response.isActive ?? true
+});
+
 const isValidResponsesPayload = (responses) =>
     Array.isArray(responses) &&
     responses.length > 0 &&
@@ -191,12 +451,22 @@ const resolveQuestionDetails = async (response) => {
     const questionReference = String(getQuestionReference(response) || "").trim();
 
     if (mongoose.Types.ObjectId.isValid(questionReference)) {
-        const question = await Question.findById(questionReference).select("_id questionText screenKey storageKey");
+        const question = await Question.findById(questionReference).select(QUESTION_SNAPSHOT_FIELDS);
+        const questionSnapshot = question
+            ? toPlainQuestionSnapshot(question)
+            : buildFallbackQuestionSnapshot(response, questionReference);
 
         return {
             questionId: question?._id || new mongoose.Types.ObjectId(questionReference),
-            questionKey: question?.storageKey || question?.screenKey || questionReference,
-            questionText: question?.questionText || response.questionText || response.question || questionReference
+            questionKey: questionSnapshot?.storageKey || questionSnapshot?.screenKey || questionReference,
+            questionText:
+                questionSnapshot?.questionText ||
+                response.questionText ||
+                response.question ||
+                questionReference,
+            screenKey: questionSnapshot?.screenKey || response.screenKey || "",
+            storageKey: questionSnapshot?.storageKey || response.storageKey || "",
+            questionSnapshot
         };
     }
 
@@ -206,12 +476,22 @@ const resolveQuestionDetails = async (response) => {
             { screenKey: questionReference },
             { questionText: questionReference }
         ]
-    }).select("_id questionText screenKey storageKey");
+    }).select(QUESTION_SNAPSHOT_FIELDS);
+    const questionSnapshot = question
+        ? toPlainQuestionSnapshot(question)
+        : buildFallbackQuestionSnapshot(response, questionReference);
 
     return {
         questionId: question?._id || null,
-        questionKey: question?.storageKey || question?.screenKey || questionReference,
-        questionText: question?.questionText || response.questionText || response.question || questionReference
+        questionKey: questionSnapshot?.storageKey || questionSnapshot?.screenKey || questionReference,
+        questionText:
+            questionSnapshot?.questionText ||
+            response.questionText ||
+            response.question ||
+            questionReference,
+        screenKey: questionSnapshot?.screenKey || response.screenKey || "",
+        storageKey: questionSnapshot?.storageKey || response.storageKey || "",
+        questionSnapshot
     };
 };
 
@@ -222,6 +502,7 @@ const normalizeResponsesPayload = async (responses) =>
 
             return {
                 ...questionDetails,
+                rawResponse: sanitizePayloadForStorage(response),
                 answer: getAnswerValue(response)
             };
         })
@@ -314,10 +595,26 @@ const toPlainResponse = (response = {}) => ({
     questionId: response.questionId?._id || response.questionId || null,
     questionKey:
         response.questionKey ||
+        response.storageKey ||
+        response.screenKey ||
         response.questionId?.storageKey ||
         response.questionId?.screenKey ||
         "",
     questionText: response.questionText || response.questionId?.questionText || "",
+    screenKey:
+        response.screenKey ||
+        response.questionSnapshot?.screenKey ||
+        response.questionId?.screenKey ||
+        "",
+    storageKey:
+        response.storageKey ||
+        response.questionSnapshot?.storageKey ||
+        response.questionId?.storageKey ||
+        "",
+    questionSnapshot:
+        response.questionSnapshot ||
+        (response.questionId && typeof response.questionId === "object" ? toPlainQuestionSnapshot(response.questionId) : null),
+    rawResponse: response.rawResponse || null,
     answer: response.answer
 });
 
@@ -347,7 +644,16 @@ const mergeStoredResponses = (existingResponses = [], incomingResponses = []) =>
     return mergedResponses;
 };
 
-const upsertUserResponse = async ({ userId, responses = [], completed, mergeWithExisting = true }) => {
+const upsertUserResponse = async ({
+    userId,
+    userSnapshot = null,
+    requestPayload = null,
+    assessmentInfo = null,
+    submissionId = "",
+    responses = [],
+    completed,
+    mergeWithExisting = true
+}) => {
     const existingUserResponse = mergeWithExisting
         ? await UserResponse.findOne({ userId }).select("responses")
         : null;
@@ -358,6 +664,22 @@ const upsertUserResponse = async ({ userId, responses = [], completed, mergeWith
         responses: nextResponses,
         lastSavedAt: new Date()
     };
+
+    if (userSnapshot) {
+        update.user = userSnapshot;
+    }
+
+    if (requestPayload !== null) {
+        update.requestPayload = requestPayload;
+    }
+
+    if (assessmentInfo !== null) {
+        update.assessmentInfo = assessmentInfo;
+    }
+
+    if (submissionId) {
+        update.submissionId = submissionId;
+    }
 
     if (completed) {
         update.completedAt = new Date();
@@ -399,25 +721,51 @@ const extractNameParts = ({ name, fullName, firstName, lastName, middleInitial }
 
 const updateUserProfileFromPayload = async (user, payload = {}) => {
     const { name, fullName, firstName, lastName, middleInitial, gender } = payload;
+    const hasNamePayload = Boolean(name || fullName || firstName || lastName || middleInitial);
+    const hasGenderPayload = Boolean(gender);
+
+    if (!hasNamePayload && !hasGenderPayload) {
+        return user;
+    }
+
     const nameParts = extractNameParts({ name, fullName, firstName, lastName, middleInitial });
+    let hasChanges = false;
 
     if (firstName || fullName || name) {
-        user.firstName = nameParts.firstName || user.firstName;
+        const nextFirstName = nameParts.firstName || user.firstName;
+        if (user.firstName !== nextFirstName) {
+            user.firstName = nextFirstName;
+            hasChanges = true;
+        }
     }
 
     if (middleInitial || fullName || name) {
-        user.middleInitial = nameParts.middleInitial || user.middleInitial;
+        const nextMiddleInitial = nameParts.middleInitial || user.middleInitial;
+        if (user.middleInitial !== nextMiddleInitial) {
+            user.middleInitial = nextMiddleInitial;
+            hasChanges = true;
+        }
     }
 
     if (lastName || fullName || name) {
-        user.lastName = nameParts.lastName || user.lastName;
+        const nextLastName = nameParts.lastName || user.lastName;
+        if (user.lastName !== nextLastName) {
+            user.lastName = nextLastName;
+            hasChanges = true;
+        }
     }
 
     if (gender) {
-        user.gender = gender;
+        if (user.gender !== gender) {
+            user.gender = gender;
+            hasChanges = true;
+        }
     }
 
-    await user.save();
+    if (hasChanges) {
+        await user.save();
+    }
+
     return user;
 };
 
@@ -435,6 +783,102 @@ const buildPublicUserPayload = (user) => ({
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt
 });
+
+const buildStoredUserSnapshot = (user) => ({
+    id: user?._id || user?.id || null,
+    name: buildDisplayName(user),
+    fullName: buildDisplayName(user),
+    email: user?.email || "",
+    firstName: user?.firstName || "",
+    middleInitial: user?.middleInitial || "",
+    lastName: user?.lastName || "",
+    gender: user?.gender || "",
+    role: user?.role || "user",
+    signedUpAt: user?.createdAt || user?.signedUpAt || null,
+    createdAt: user?.createdAt || null,
+    lastLoginAt: user?.lastLoginAt || null
+});
+
+const normalizeEmail = (email) => String(email || "").toLowerCase().trim();
+
+const findOrCreateParticipantUserFromProfile = async (profilePayload = {}) => {
+    const normalizedEmail = normalizeEmail(profilePayload.email);
+
+    if (!normalizedEmail) {
+        const error = new Error("Email is required to save assessment responses.");
+        error.statusCode = 400;
+        throw error;
+    }
+
+    let user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+        const nameParts = extractNameParts(profilePayload);
+        user = await User.create({
+            email: normalizedEmail,
+            firstName: nameParts.firstName,
+            middleInitial: nameParts.middleInitial,
+            lastName: nameParts.lastName,
+            gender: profilePayload.gender,
+            role: "user"
+        });
+    }
+
+    if (user.role === "admin") {
+        const error = new Error("Admins cannot participate in the assessment. Please use the dashboard.");
+        error.statusCode = 403;
+        throw error;
+    }
+
+    return user;
+};
+
+const normalizeComparableSnapshotValue = (value) => {
+    if (!value) {
+        return "";
+    }
+
+    if (value instanceof Date) {
+        return value.toISOString();
+    }
+
+    return String(value);
+};
+
+const hasUserSnapshotChanged = (currentUser = {}, nextUser = {}) =>
+    [
+        "id",
+        "name",
+        "fullName",
+        "email",
+        "firstName",
+        "middleInitial",
+        "lastName",
+        "gender",
+        "role",
+        "signedUpAt",
+        "createdAt",
+        "lastLoginAt"
+    ].some(
+        (field) =>
+            normalizeComparableSnapshotValue(currentUser?.[field]) !==
+            normalizeComparableSnapshotValue(nextUser?.[field])
+    );
+
+const syncUserResponseUserSnapshot = async (userResponse, user) => {
+    if (!userResponse || !user) {
+        return userResponse;
+    }
+
+    const userSnapshot = buildStoredUserSnapshot(user);
+
+    if (hasUserSnapshotChanged(userResponse.user, userSnapshot)) {
+        userResponse.user = userSnapshot;
+        await userResponse.save();
+    }
+
+    return userResponse;
+};
 
 const getParticipantUser = async (userId) => {
     const user = await User.findById(userId);
@@ -459,9 +903,8 @@ const getParticipantUserFromRequest = async (req) => {
         return getParticipantUser(req.user.userId);
     }
 
-    const error = new Error("Login token is required to save assessment responses.");
-    error.statusCode = 401;
-    throw error;
+    const profilePayload = getUserProfilePayloadFromBody(req.body);
+    return findOrCreateParticipantUserFromProfile(profilePayload);
 };
 
 const sendParticipantError = (res, error) =>
@@ -477,7 +920,11 @@ const buildDisplayName = (user) =>
         user?.lastName
     ]
         .filter(Boolean)
-        .join(" ") || "Guest";
+        .join(" ") ||
+    user?.name ||
+    user?.fullName ||
+    user?.email ||
+    "Guest";
 
 const isObjectIdLike = (value) =>
     value instanceof mongoose.Types.ObjectId ||
@@ -499,7 +946,7 @@ const getRecordUser = (record = {}) => {
 const getRecordUserId = (record = {}) => {
     const user = getRecordUser(record);
 
-    return user?._id || record.user?._id || record.userId?._id || record.userId || null;
+    return user?._id || user?.id || record.user?._id || record.user?.id || record.userId?._id || record.userId?.id || record.userId || null;
 };
 
 const formatSubmissionDate = (value) =>
@@ -540,7 +987,14 @@ const buildFormattedSubmissions = (records) =>
 
         const firstThreeQuestions = validResponses
             .slice(0, 3)
-            .map((response) => response.questionId?.questionText || response.questionText || response.questionKey || "Question")
+            .map(
+                (response) =>
+                    response.questionId?.questionText ||
+                    response.questionSnapshot?.questionText ||
+                    response.questionText ||
+                    response.questionKey ||
+                    "Question"
+            )
             .join(", ");
 
         const summary =
@@ -560,6 +1014,8 @@ const buildFormattedSubmissions = (records) =>
             gender: user?.gender || "N/A",
             date: formatSubmissionDate(record.completedAt),
             createdAt: formatDateTime(record.completedAt || record.createdAt),
+            submissionIdValue: record.submissionId || "",
+            message: record.assessmentInfo?.message || record.requestPayload?.message || "",
             questions: summary,
             responseCount,
             status: record.completedAt ? "Published" : "Draft",
@@ -571,15 +1027,24 @@ const buildFormattedSubmissions = (records) =>
             fullResponses: validResponses.map((response) => ({
                 key: String(
                     response.questionId?.screenKey ||
+                    response.questionSnapshot?.screenKey ||
                     response.questionId?.storageKey ||
+                    response.questionSnapshot?.storageKey ||
                     response.questionKey ||
                     response.questionId?._id ||
                     "question"
                 )
                     .replace(/-/g, " ")
                     .toUpperCase(),
-                question: response.questionId?.questionText || response.questionText || response.questionKey || "Question",
-                answer: formatAnswerValue(response.answer)
+                question:
+                    response.questionId?.questionText ||
+                    response.questionSnapshot?.questionText ||
+                    response.questionText ||
+                    response.questionKey ||
+                    "Question",
+                answer: formatAnswerValue(response.answer),
+                questionSnapshot: response.questionSnapshot || null,
+                rawResponse: response.rawResponse || null
             })),
             user: {
                 id: userId,
@@ -592,15 +1057,23 @@ const buildFormattedSubmissions = (records) =>
 
 const buildDetailedUserResponses = (records) =>
     records.map((record, index) => {
-        const user = record.userId || null;
+        const user = getRecordUser(record);
+        const userId = getRecordUserId(record);
         const responses = (record.responses || []).filter(Boolean);
         const answers = responses.map((response) => ({
             questionId: response.questionId?._id || response.questionId || null,
-            question: response.questionId?.questionText || response.questionText || response.questionKey || "Question",
-            screenKey: response.questionId?.screenKey || response.questionKey || "",
-            storageKey: response.questionId?.storageKey || response.questionKey || "",
+            question:
+                response.questionId?.questionText ||
+                response.questionSnapshot?.questionText ||
+                response.questionText ||
+                response.questionKey ||
+                "Question",
+            screenKey: response.questionId?.screenKey || response.questionSnapshot?.screenKey || response.screenKey || response.questionKey || "",
+            storageKey: response.questionId?.storageKey || response.questionSnapshot?.storageKey || response.storageKey || response.questionKey || "",
             questionKey: response.questionKey || response.questionId?.storageKey || response.questionId?.screenKey || "",
-            answer: formatAnswerValue(response.answer)
+            answer: formatAnswerValue(response.answer),
+            questionSnapshot: response.questionSnapshot || null,
+            rawResponse: response.rawResponse || null
         }));
 
         const firstThreeQuestions = answers
@@ -612,7 +1085,7 @@ const buildDetailedUserResponses = (records) =>
             id: record._id,
             userResponseId: record._id,
             submissionId: `#${1011 + index}`,
-            userId: user?._id || null,
+            userId,
             name: buildDisplayName(user),
             username: buildDisplayName(user),
             fullName: buildDisplayName(user),
@@ -624,6 +1097,9 @@ const buildDetailedUserResponses = (records) =>
             updatedAt: formatDateTime(record.updatedAt),
             completedAt: record.completedAt || null,
             lastSavedAt: record.lastSavedAt || record.updatedAt || null,
+            submissionIdValue: record.submissionId || "",
+            message: record.assessmentInfo?.message || record.requestPayload?.message || "",
+            assessmentInfo: record.assessmentInfo || null,
             responseCount: responses.length,
             status: record.completedAt ? "Published" : "Draft",
             questions:
@@ -638,7 +1114,7 @@ const buildDetailedUserResponses = (records) =>
             answers,
             fullResponses: answers,
             user: {
-                id: user?._id || null,
+                id: userId,
                 name: buildDisplayName(user),
                 fullName: buildDisplayName(user),
                 email: user?.email || "N/A",
@@ -730,8 +1206,9 @@ const buildSelectedUser = (submissions, queryEmail) => {
 
 const buildReportPayload = async (query = {}) => {
     const dashboardRecords = filterDashboardRecords(await getDashboardRecords(), query);
+    const submissionRecords = filterDashboardRecords(await getStoredUserResponseRecords(), query);
     const stats = await buildDashboardStats();
-    const submissions = buildFormattedSubmissions(dashboardRecords);
+    const submissions = buildFormattedSubmissions(submissionRecords);
     const users = buildDashboardUsers(dashboardRecords);
     const selectedUser = buildSelectedUser(submissions, query.q);
 
@@ -791,6 +1268,30 @@ const buildCsvContent = (submissions) => {
     return [header.join(","), ...rows].join("\n");
 };
 
+const getStoredUserResponseRecords = async () => {
+    const userResponses = await UserResponse.find()
+        .populate("userId", "-password -__v")
+        .populate("responses.questionId", QUESTION_SNAPSHOT_FIELDS)
+        .sort({ createdAt: -1 })
+        .lean();
+
+    return userResponses.map((response) => {
+        const populatedUser =
+            response.userId &&
+            typeof response.userId === "object" &&
+            !isObjectIdLike(response.userId)
+                ? response.userId
+                : null;
+
+        return {
+            ...response,
+            userId: populatedUser?._id || response.userId?._id || response.userId || null,
+            userResponseId: response._id,
+            user: response.user || populatedUser || null
+        };
+    });
+};
+
 const getDashboardRecords = async () => {
     const [users, userResponses] = await Promise.all([
         User.find({ role: "user" })
@@ -807,7 +1308,7 @@ const getDashboardRecords = async () => {
         userResponses.map((response) => [String(response.userId), response])
     );
 
-    return users.map((user) => {
+    const records = users.map((user) => {
         const matchedResponse = responseByUserId.get(String(user._id));
 
         return {
@@ -815,14 +1316,49 @@ const getDashboardRecords = async () => {
             id: matchedResponse?._id || user._id,
             userId: matchedResponse?.userId || user._id,
             userResponseId: matchedResponse?._id || null,
-            user,
+            user: matchedResponse?.user || user,
             responses: matchedResponse?.responses || [],
+            requestPayload: matchedResponse?.requestPayload || null,
+            assessmentInfo: matchedResponse?.assessmentInfo || null,
+            submissionId: matchedResponse?.submissionId || "",
             completedAt: matchedResponse?.completedAt || null,
             lastSavedAt: matchedResponse?.lastSavedAt || null,
             createdAt: matchedResponse?.createdAt || user.createdAt,
             updatedAt: matchedResponse?.updatedAt || user.updatedAt
         };
     });
+
+    const knownUserIds = new Set(users.map((user) => String(user._id)));
+    const orphanResponseRecords = userResponses
+        .filter((response) => !knownUserIds.has(String(response.userId)))
+        .map((response) => ({
+            _id: response._id,
+            id: response._id,
+            userId: response.userId,
+            userResponseId: response._id,
+            user: response.user || {
+                _id: response.userId,
+                id: response.userId,
+                name: "Guest",
+                fullName: "Guest",
+                email: "N/A",
+                role: "user",
+                gender: "N/A",
+                createdAt: response.createdAt
+            },
+            responses: response.responses || [],
+            requestPayload: response.requestPayload || null,
+            assessmentInfo: response.assessmentInfo || null,
+            submissionId: response.submissionId || "",
+            completedAt: response.completedAt || null,
+            lastSavedAt: response.lastSavedAt || null,
+            createdAt: response.createdAt || null,
+            updatedAt: response.updatedAt || null
+        }));
+
+    return [...records, ...orphanResponseRecords].sort(
+        (left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()
+    );
 };
 
 const buildDashboardStats = async () => {
@@ -959,12 +1495,36 @@ export const getQuestionById = async (req, res) => {
 export const saveLeadUser = async (req, res) => {
     try {
         const user = await getParticipantUserFromRequest(req);
-        await updateUserProfileFromPayload(user, req.body);
+        const profilePayload = getUserProfilePayloadFromBody(req.body);
+        const updatedUser = await updateUserProfileFromPayload(user, profilePayload);
+        const submissionId = getSubmissionIdFromBody(req.body);
+        const userResponse = await UserResponse.findOneAndUpdate(
+            { userId: updatedUser._id },
+            {
+                $set: {
+                    user: buildStoredUserSnapshot(updatedUser),
+                    requestPayload: sanitizePayloadForStorage(req.body),
+                    assessmentInfo: getAssessmentInfoFromBody(req.body),
+                    ...(submissionId ? { submissionId } : {}),
+                    lastSavedAt: new Date()
+                },
+                $setOnInsert: {
+                    userId: updatedUser._id
+                }
+            },
+            {
+                returnDocument: "after",
+                upsert: true,
+                runValidators: true,
+                setDefaultsOnInsert: true
+            }
+        );
 
         return res.status(200).json({
             success: true,
             message: "User details saved",
-            user: buildPublicUserPayload(user)
+            user: buildPublicUserPayload(updatedUser),
+            userResponse
         });
     } catch (error) {
         return sendParticipantError(res, error);
@@ -1021,8 +1581,11 @@ export const deleteQuestion = async (req, res) => {
 
 export const saveUserResponses = async (req, res) => {
     try {
-        const { completed, gender, name, fullName, firstName, lastName, middleInitial } = req.body;
         const responses = getResponsesFromRequest(req.body);
+        const profilePayload = getUserProfilePayloadFromBody(req.body);
+        const requestPayload = sanitizePayloadForStorage(req.body);
+        const assessmentInfo = getAssessmentInfoFromBody(req.body);
+        const submissionId = getSubmissionIdFromBody(req.body);
 
         if (!isValidResponsesPayload(responses)) {
             return res.status(400).json({
@@ -1036,23 +1599,25 @@ export const saveUserResponses = async (req, res) => {
         const normalizedResponses = await normalizeResponsesPayload(responses);
         const isCompleted = await shouldCompleteAssessment(req.body, normalizedResponses);
 
-        await updateUserProfileFromPayload(user, {
-            gender,
-            name,
-            fullName,
-            firstName,
-            lastName,
-            middleInitial
-        });
+        const updatedUser = await updateUserProfileFromPayload(user, profilePayload);
 
         const userResponse = await upsertUserResponse({
             userId,
+            userSnapshot: buildStoredUserSnapshot(updatedUser),
+            requestPayload,
+            assessmentInfo,
+            submissionId,
             responses: normalizedResponses,
             completed: isCompleted,
             mergeWithExisting: true
         });
 
-        return res.status(200).json({ success: true, message: "Responses saved", userResponse });
+        return res.status(200).json({
+            success: true,
+            message: "Responses saved",
+            user: buildPublicUserPayload(updatedUser),
+            userResponse
+        });
     } catch (error) {
         console.error("Error in saveUserResponses:", error);
         return sendParticipantError(res, error);
@@ -1073,6 +1638,8 @@ export const appendUserResponse = async (req, res) => {
 
         const user = await getParticipantUserFromRequest(req);
         const userId = user._id;
+        const userSnapshot = buildStoredUserSnapshot(user);
+        const submissionId = getSubmissionIdFromBody(req.body);
         const resolvedQuestion = await resolveQuestionDetails({
             questionId,
             _id,
@@ -1086,7 +1653,7 @@ export const appendUserResponse = async (req, res) => {
 
         let userResponse = await UserResponse.findOne({ userId });
         if (!userResponse) {
-            userResponse = new UserResponse({ userId, responses: [] });
+            userResponse = new UserResponse({ userId, user: userSnapshot, responses: [] });
         }
 
         const existingIndex = userResponse.responses.findIndex(
@@ -1100,11 +1667,25 @@ export const appendUserResponse = async (req, res) => {
             userResponse.responses[existingIndex].questionId = resolvedQuestion.questionId;
             userResponse.responses[existingIndex].questionKey = resolvedQuestion.questionKey;
             userResponse.responses[existingIndex].questionText = resolvedQuestion.questionText;
+            userResponse.responses[existingIndex].screenKey = resolvedQuestion.screenKey;
+            userResponse.responses[existingIndex].storageKey = resolvedQuestion.storageKey;
+            userResponse.responses[existingIndex].questionSnapshot = resolvedQuestion.questionSnapshot;
+            userResponse.responses[existingIndex].rawResponse = sanitizePayloadForStorage(req.body);
         } else {
-            userResponse.responses.push({ ...resolvedQuestion, answer: answerValue });
+            userResponse.responses.push({
+                ...resolvedQuestion,
+                rawResponse: sanitizePayloadForStorage(req.body),
+                answer: answerValue
+            });
         }
 
         userResponse.lastSavedAt = new Date();
+        userResponse.user = userSnapshot;
+        userResponse.requestPayload = sanitizePayloadForStorage(req.body);
+        userResponse.assessmentInfo = getAssessmentInfoFromBody(req.body);
+        if (submissionId) {
+            userResponse.submissionId = submissionId;
+        }
         if (await shouldCompleteAssessment(req.body, [{ ...resolvedQuestion, answer: answerValue }])) {
             userResponse.completedAt = new Date();
         }
@@ -1118,14 +1699,21 @@ export const appendUserResponse = async (req, res) => {
 
 export const getUserResponses = async (req, res) => {
     try {
-        const userId = req.user.userId;
-        const userResponse = await UserResponse.findOne({ userId }).populate("responses.questionId");
+        const user = await getParticipantUserFromRequest(req);
+        let userResponse = await UserResponse.findOne({ userId: user._id }).populate("responses.questionId");
 
         if (!userResponse) {
             return res.status(404).json({ message: "No responses found for this user" });
         }
 
-        return res.status(200).json({ success: true, userResponse });
+        userResponse = await syncUserResponseUserSnapshot(userResponse, user);
+        await userResponse.populate("responses.questionId");
+
+        return res.status(200).json({
+            success: true,
+            user: buildPublicUserPayload(user),
+            userResponse
+        });
     } catch (error) {
         console.error("Error in getUserResponses:", error);
         return res.status(500).json({ message: "Server error", error: error.message });
@@ -1134,16 +1722,12 @@ export const getUserResponses = async (req, res) => {
 
 export const submitAssessment = async (req, res) => {
     try {
-        const {
-            name,
-            fullName,
-            firstName,
-            lastName,
-            middleInitial,
-            gender
-        } = req.body;
         const responses = getResponsesFromRequest(req.body);
         const hasIncomingResponses = responses.length > 0;
+        const profilePayload = getUserProfilePayloadFromBody(req.body);
+        const requestPayload = sanitizePayloadForStorage(req.body);
+        const assessmentInfo = getAssessmentInfoFromBody(req.body);
+        const submissionId = getSubmissionIdFromBody(req.body);
 
         if (hasIncomingResponses && !isValidResponsesPayload(responses)) {
             return res.status(400).json({
@@ -1153,30 +1737,13 @@ export const submitAssessment = async (req, res) => {
         }
 
         const user = await getParticipantUserFromRequest(req);
+        const userId = user._id;
         let userResponse;
 
-        if (hasIncomingResponses) {
-            const normalizedResponses = await normalizeResponsesPayload(responses);
+        if (!hasIncomingResponses) {
+            const existingUserResponse = await UserResponse.findOne({ userId }).select("responses");
 
-            userResponse = await upsertUserResponse({
-                userId: user._id,
-                responses: normalizedResponses,
-                completed: true,
-                mergeWithExisting: true
-            });
-        } else {
-            userResponse = await UserResponse.findOneAndUpdate(
-                { userId: user._id },
-                {
-                    $set: {
-                        completedAt: new Date(),
-                        lastSavedAt: new Date()
-                    }
-                },
-                { returnDocument: "after" }
-            );
-
-            if (!userResponse || !Array.isArray(userResponse.responses) || userResponse.responses.length === 0) {
+            if (!existingUserResponse || !Array.isArray(existingUserResponse.responses) || existingUserResponse.responses.length === 0) {
                 return res.status(400).json({
                     success: false,
                     message: "No saved assessment responses found for this user. Submit responses or save them before finishing the assessment."
@@ -1184,17 +1751,41 @@ export const submitAssessment = async (req, res) => {
             }
         }
 
-        await updateUserProfileFromPayload(user, {
-            name,
-            fullName,
-            firstName,
-            lastName,
-            middleInitial,
-            gender
-        });
+        const updatedUser = await updateUserProfileFromPayload(user, profilePayload);
+        const userSnapshot = buildStoredUserSnapshot(updatedUser);
+
+        if (hasIncomingResponses) {
+            const normalizedResponses = await normalizeResponsesPayload(responses);
+
+            userResponse = await upsertUserResponse({
+                userId,
+                userSnapshot,
+                requestPayload,
+                assessmentInfo,
+                submissionId,
+                responses: normalizedResponses,
+                completed: true,
+                mergeWithExisting: true
+            });
+        } else {
+            userResponse = await UserResponse.findOneAndUpdate(
+                { userId },
+                {
+                    $set: {
+                        completedAt: new Date(),
+                        lastSavedAt: new Date(),
+                        user: userSnapshot,
+                        requestPayload,
+                        assessmentInfo,
+                        ...(submissionId ? { submissionId } : {})
+                    }
+                },
+                { returnDocument: "after" }
+            );
+        }
 
         const token = jwt.sign(
-            { userId: user._id, email: user.email, role: user.role },
+            { userId: updatedUser._id, email: updatedUser.email, role: updatedUser.role },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );
@@ -1203,7 +1794,7 @@ export const submitAssessment = async (req, res) => {
             success: true,
             message: "Assessment submitted",
             token,
-            user: buildPublicUserPayload(user),
+            user: buildPublicUserPayload(updatedUser),
             userResponse
         });
     } catch (error) {
@@ -1215,8 +1806,13 @@ export const submitAssessment = async (req, res) => {
 export const completeAssessment = async (req, res) => {
     try {
         const user = await getParticipantUserFromRequest(req);
+        const userId = user._id;
         const responses = getResponsesFromRequest(req.body);
         const hasIncomingResponses = responses.length > 0;
+        const profilePayload = getUserProfilePayloadFromBody(req.body);
+        const requestPayload = sanitizePayloadForStorage(req.body);
+        const assessmentInfo = getAssessmentInfoFromBody(req.body);
+        const submissionId = getSubmissionIdFromBody(req.body);
         let userResponse;
 
         if (hasIncomingResponses) {
@@ -1228,30 +1824,42 @@ export const completeAssessment = async (req, res) => {
             }
 
             const normalizedResponses = await normalizeResponsesPayload(responses);
+            const updatedUser = await updateUserProfileFromPayload(user, profilePayload);
             userResponse = await upsertUserResponse({
-                userId: user._id,
+                userId,
+                userSnapshot: buildStoredUserSnapshot(updatedUser),
+                requestPayload,
+                assessmentInfo,
+                submissionId,
                 responses: normalizedResponses,
                 completed: true,
                 mergeWithExisting: true
             });
         } else {
-            userResponse = await UserResponse.findOneAndUpdate(
-                { userId: user._id },
-                {
-                    $set: {
-                        completedAt: new Date(),
-                        lastSavedAt: new Date()
-                    }
-                },
-                { returnDocument: "after" }
-            );
+            const existingUserResponse = await UserResponse.findOne({ userId }).select("responses");
 
-            if (!userResponse) {
+            if (!existingUserResponse) {
                 return res.status(400).json({
                     success: false,
                     message: "No saved assessment responses found for this user. Send responses with the complete request."
                 });
             }
+
+            const updatedUser = await updateUserProfileFromPayload(user, profilePayload);
+            userResponse = await UserResponse.findOneAndUpdate(
+                { userId },
+                {
+                    $set: {
+                        completedAt: new Date(),
+                        lastSavedAt: new Date(),
+                        user: buildStoredUserSnapshot(updatedUser),
+                        requestPayload,
+                        assessmentInfo,
+                        ...(submissionId ? { submissionId } : {})
+                    }
+                },
+                { returnDocument: "after" }
+            );
         }
 
         return res.status(200).json({
@@ -1268,8 +1876,8 @@ export const completeAssessment = async (req, res) => {
 
 export const getAllSubmissions = async (req, res) => {
     try {
-        const dashboardRecords = filterDashboardRecords(await getDashboardRecords(), req.query);
-        const formattedSubmissions = buildFormattedSubmissions(dashboardRecords);
+        const submissionRecords = filterDashboardRecords(await getStoredUserResponseRecords(), req.query);
+        const formattedSubmissions = buildFormattedSubmissions(submissionRecords);
 
         return res.status(200).json({
             success: true,
@@ -1279,7 +1887,7 @@ export const getAllSubmissions = async (req, res) => {
             submissions: formattedSubmissions,
             userResponses: formattedSubmissions,
             debug: {
-                rawCount: dashboardRecords.length,
+                rawCount: submissionRecords.length,
                 dbConnected: mongoose.connection.readyState === 1
             }
         });
@@ -1291,9 +1899,9 @@ export const getAllSubmissions = async (req, res) => {
 
 export const getAllUserResponses = async (req, res) => {
     try {
-        const dashboardRecords = filterDashboardRecords(await getDashboardRecords(), req.query);
+        const submissionRecords = filterDashboardRecords(await getStoredUserResponseRecords(), req.query);
         const responseDocumentCount = await UserResponse.countDocuments();
-        const userResponses = buildFormattedSubmissions(dashboardRecords).map((submission) => ({
+        const userResponses = buildDetailedUserResponses(submissionRecords).map((submission) => ({
             ...submission,
             answers: submission.fullResponses
         }));
@@ -1308,7 +1916,7 @@ export const getAllUserResponses = async (req, res) => {
             submissions: userResponses,
             data: userResponses,
             debug: {
-                rawCount: dashboardRecords.length,
+                rawCount: submissionRecords.length,
                 responseDocumentCount,
                 dbConnected: mongoose.connection.readyState === 1
             }
@@ -1406,8 +2014,9 @@ export const exportReportsData = async (req, res) => {
 export const getAdminDashboardData = async (req, res) => {
     try {
         const dashboardRecords = filterDashboardRecords(await getDashboardRecords(), req.query);
+        const submissionRecords = filterDashboardRecords(await getStoredUserResponseRecords(), req.query);
         const stats = await buildDashboardStats();
-        const formattedSubmissions = buildFormattedSubmissions(dashboardRecords);
+        const formattedSubmissions = buildFormattedSubmissions(submissionRecords);
         const users = buildDashboardUsers(dashboardRecords);
         const selectedUser = buildSelectedUser(formattedSubmissions, req.query.q);
 

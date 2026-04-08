@@ -134,5 +134,9 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/questions", questionRoutes);
 app.use("/api/v1/responses", responseRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/questions", questionRoutes);
+app.use("/api/responses", responseRoutes);
 
 export { app };

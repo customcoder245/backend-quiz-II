@@ -62,10 +62,8 @@ export const optionalProtect = async (req, res, next) => {
         await attachUserFromToken(req, token);
         return next();
     } catch (error) {
-        return res.status(error.statusCode || 401).json({
-            success: false,
-            message: error.message || "Invalid or expired token."
-        });
+        req.user = undefined;
+        return next();
     }
 };
 
