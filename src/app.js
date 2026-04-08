@@ -25,10 +25,7 @@ const getEnvOrigins = (value = "") =>
 const allowedOrigins = [
   ...getEnvOrigins(process.env.FRONTEND_URL),
   ...getEnvOrigins(process.env.CORS_ORIGIN),
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173"
+  
 ].filter((origin, index, origins) => origin && origins.indexOf(origin) === index);
 
 const parseCookies = (cookieHeader = "") =>
