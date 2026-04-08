@@ -8,7 +8,7 @@ dns.setServers(["8.8.8.8", "8.8.4.4"]);
 dotenv.config();
 
 const adminCredentials = {
-  email: process.env.ADMIN_EMAIL || "admin@example.com",
+  email: process.env.ADMIN_EMAIL || "customcoder245@gmail.com",
   password: process.env.ADMIN_PASSWORD || "Admin@12345",
   firstName: "Admin",
   lastName: "User",
@@ -17,7 +17,6 @@ const adminCredentials = {
 
 const normalUserCredentials = {
   email: process.env.USER_EMAIL || "user@example.com",
-  password: process.env.USER_PASSWORD || "User@12345",
   firstName: "Normal",
   lastName: "User",
   role: "user",
@@ -27,18 +26,33 @@ const normalUserCredentials = {
 const ensureUser = async ({ email, password, ...rest }) => {
   const existingUser = await User.findOne({ email });
   if (existingUser) {
-    console.log(`${rest.role} already exists: ${email}`);
+    existingUser.firstName = rest.firstName ?? existingUser.firstName;
+    existingUser.lastName = rest.lastName ?? existingUser.lastName;
+    existingUser.role = rest.role ?? existingUser.role;
+
+    if (rest.gender) {
+      existingUser.gender = rest.gender;
+    }
+
+    if (password) {
+      existingUser.password = await bcrypt.hash(password, 10);
+    }
+
+    await existingUser.save();
+    console.log(`${rest.role} synced: ${email}${password ? ` / ${password}` : ""}`);
     return;
   }
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const hashedPassword = password ? await bcrypt.hash(password, 10) : undefined;
   await User.create({
     email,
-    password: hashedPassword,
+    ...(hashedPassword ? { password: hashedPassword } : {}),
     ...rest
   });
 
-  console.log(`${rest.role} created: ${email} / ${password}`);
+  console.log(
+    `${rest.role} created: ${email}${password ? ` / ${password}` : " / no password required"}`
+  );
 };
 
 const seedUsers = async () => {

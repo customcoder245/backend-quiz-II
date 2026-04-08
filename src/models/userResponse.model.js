@@ -5,12 +5,22 @@ const answerSchema = new Schema(
         questionId: {
             type: Schema.Types.ObjectId,
             ref: "Question",
-            required: true,
+            default: null,
+        },
+        questionKey: {
+            type: String,
+            default: "",
+            trim: true,
+        },
+        questionText: {
+            type: String,
+            default: "",
+            trim: true,
         },
         // For single-select: a string. For multi-select: an array. For input: a string/number.
         answer: {
             type: Schema.Types.Mixed,
-            required: true,
+            default: null,
         },
     },
     { _id: false }
@@ -22,12 +32,16 @@ const userResponseSchema = new Schema(
             type: Schema.Types.ObjectId,
             ref: "User",
             required: true,
-            unique: true, // one quiz response per user
+            unique: true, // one quiz response per user 
         },
         responses: [answerSchema],
         completedAt: {
             type: Date,
             default: null,
+        },
+        lastSavedAt: {
+            type: Date,
+            default: Date.now,
         },
     },
     { timestamps: true, collection: "userresponses" }

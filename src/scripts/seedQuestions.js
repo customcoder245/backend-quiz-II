@@ -12,15 +12,10 @@ const seedQuestions = async () => {
         await mongoose.connect(process.env.MONGODB_URL);
         console.log("MongoDB connected");
 
-        for (const question of defaultQuestions) {
-            await Question.findOneAndUpdate(
-                { order: question.order },
-                question,
-                { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
-            );
-        }
+        await Question.deleteMany({});
+        await Question.insertMany(defaultQuestions, { ordered: true });
 
-        console.log(`${defaultQuestions.length} questions synced successfully.`);
+        console.log(`${defaultQuestions.length} frontend questions inserted successfully.`);
         process.exit(0);
     } catch (error) {
         console.error("Error seeding questions:", error.message);

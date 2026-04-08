@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero">
+        <div>
+          <span class="badge">Protected Dashboard</span>
+          <h1>Assessment Submissions</h1>
+          <p class="lead">
+            The dashboard will only open after login. Below, the usernames and emails of the assessment users coming from the database are displayed.
+          </p>
+        </div>
+
+        <div class="top-actions">
+          <button id="reportsButton" class="secondary" type="button">Open Reports</button>
+          <button id="refreshButton" class="secondary" type="button">Refresh</button>
+          <button id="logoutButton" type="button">Logout</button>
+        </div>
+      </section>
+
+      <section id="statsGrid" class="stats-grid"></section>
+
+      <section class="dashboard-layout">
+        <section class="card panel">
+          <div class="toolbar">
+            <div>
+              <h2>Live Users</h2>
+              <p class="lead">These cards are showing the real users from the database.</p>
+            </div>
+            <p id="usersMessage" class="message"></p>
+          </div>
+          <div id="userCards" class="user-grid"></div>
+        </section>
+
+        <section class="card panel">
+          <div class="toolbar">
+            <div>
+              <h2>Recent Submissions</h2>
+              <p class="lead">The username, email, date, and selected answers are visible here.</p>
+            </div>
+            <p id="dashboardMessage" class="message"></p>
+          </div>
+
+          <div style="overflow-x:auto;">
+            <table class="submissions-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Email</th>
+                  <th>Gender</th>
+                  <th>Date</th>
+                  <th>Responses</th>
+                  <th>Summary</th>
+                  <th>Answers</th>
+                </tr>
+              </thead>
+              <tbody id="submissionTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/dashboard.js"></script>
+  </body>
+</html>

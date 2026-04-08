@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Login</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="card login-card">
+        <span class="badge">Admin Access</span>
+        <h1>Open the dashboard only after logging in.</h1>
+        <p class="lead">
+          This page is for admin login. After a valid login, the token will be saved, and you will be able to view the dashboard directly.
+        </p>
+
+        <div class="credential-box">
+          <h2>Login Credentials</h2>
+          <p class="lead">Enter these details to open the dashboard.</p>
+          <div class="credential-row">
+            <span>Username / Email</span>
+            <strong id="credentialEmail">Loading...</strong>
+          </div>
+          <div class="credential-row">
+            <span>Password</span>
+            <strong id="credentialPassword">Loading...</strong>
+          </div>
+        </div>
+
+        <form id="loginForm">
+          <label>
+            Email
+            <input id="email" type="email" placeholder="admin@example.com" required />
+          </label>
+
+          <label>
+            Password
+            <input id="password" type="password" placeholder="Enter password" required />
+          </label>
+
+          <button id="loginButton" type="submit">Login</button>
+          <p id="loginMessage" class="message"></p>
+        </form>
+      </section>
+    </main>
+
+    <script src="/login.js"></script>
+  </body>
+</html>
