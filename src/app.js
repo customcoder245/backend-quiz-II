@@ -25,8 +25,9 @@ const getEnvOrigins = (value = "") =>
 const allowedOrigins = [
   ...getEnvOrigins(process.env.FRONTEND_URL),
   ...getEnvOrigins(process.env.CORS_ORIGIN),
-  
-].filter((origin, index, origins) => origin && origins.indexOf(origin) === index);
+].filter(
+  (origin, index, origins) => origin && origins.indexOf(origin) === index,
+);
 
 const parseCookies = (cookieHeader = "") =>
   cookieHeader.split(";").reduce((cookies, entry) => {
@@ -46,8 +47,11 @@ app.use(async (req, res, next) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Database connection failed",
-      error: process.env.NODE_ENV === "development" ? error.message : "Internal Server Error"
+      message: "Database connection failed!!!",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : "Internal Server Error",
     });
   }
 });
@@ -59,14 +63,18 @@ app.use("/exports", express.static(exportsDirectory));
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      if (
+        !origin ||
+        allowedOrigins.length === 0 ||
+        allowedOrigins.includes(origin)
+      ) {
         return callback(null, true);
       }
 
       return callback(new Error("CORS origin not allowed"));
     },
-    credentials: true
-  })
+    credentials: true,
+  }),
 );
 
 app.get("/", (req, res) => {
@@ -123,7 +131,8 @@ app.get("/api-status", (req, res) => {
   res.status(200).json({
     success: true,
     message: "API is working",
-    dbStatus: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
+    dbStatus:
+      mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
   });
 });
 
