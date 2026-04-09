@@ -15,7 +15,6 @@ const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDirectory = path.join(__dirname, "public");
-const exportsDirectory = path.join(__dirname, "exports");
 const getEnvOrigins = (value = "") =>
   value
     .split(",")
@@ -54,7 +53,6 @@ app.use(async (req, res, next) => {
 
 app.use(express.json());
 app.use(express.static(publicDirectory));
-app.use("/exports", express.static(exportsDirectory));
 
 app.use(
   cors({

@@ -4,15 +4,9 @@ import UserResponse from "../models/userResponse.model.js";
 import User from "../models/user.model.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const exportsDirectory = path.join(__dirname, "..", "exports");
 const ASSESSMENT_COMPLETE_SCREEN = 24;
 const QUESTION_SNAPSHOT_FIELDS = [
     "_id",
@@ -1975,13 +1969,9 @@ export const exportReportsData = async (req, res) => {
     try {
         const format = String(req.query.format || "json").toLowerCase();
         const reportPayload = await buildReportPayload(req.query);
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
         const extension = format === "csv" ? "csv" : "json";
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
         const fileName = `report-${timestamp}.${extension}`;
-        const filePath = path.join(exportsDirectory, fileName);
-
-        await fs.mkdir(exportsDirectory, { recursive: true });
-
         const fileContent =
             extension === "csv"
                 ? buildCsvContent(reportPayload.submissions)
@@ -1994,17 +1984,13 @@ export const exportReportsData = async (req, res) => {
                     2
                 );
 
-        await fs.writeFile(filePath, fileContent, "utf8");
+        res.setHeader(
+            "Content-Type",
+            extension === "csv" ? "text/csv; charset=utf-8" : "application/json; charset=utf-8"
+        );
+        res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
 
-        return res.status(200).json({
-            success: true,
-            message: "Report exported successfully",
-            fileName,
-            filePath,
-            downloadUrl: `/exports/${fileName}`,
-            format: extension,
-            totalRows: reportPayload.report.totalRows
-        });
+        return res.status(200).send(fileContent);
     } catch (error) {
         console.error("Error in exportReportsData:", error);
         return res.status(500).json({ success: false, message: "Server error", error: error.message });
