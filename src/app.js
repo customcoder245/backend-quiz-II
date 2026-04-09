@@ -24,7 +24,6 @@ const getEnvOrigins = (value = "") =>
 const allowedOrigins = [
   ...getEnvOrigins(process.env.FRONTEND_URL),
   ...getEnvOrigins(process.env.CORS_ORIGIN),
-  
 ].filter((origin, index, origins) => origin && origins.indexOf(origin) === index);
 
 const parseCookies = (cookieHeader = "") =>
@@ -38,6 +37,22 @@ const parseCookies = (cookieHeader = "") =>
     return cookies;
   }, {});
 
+app.use(express.json());
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("CORS origin not allowed"));
+  },
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+app.use(express.static(publicDirectory));
+
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -50,22 +65,6 @@ app.use(async (req, res, next) => {
     });
   }
 });
-
-app.use(express.json());
-app.use(express.static(publicDirectory));
-
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error("CORS origin not allowed"));
-    },
-    credentials: true
-  })
-);
 
 app.get("/", (req, res) => {
   return res.redirect("/login");
